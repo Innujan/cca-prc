@@ -3,32 +3,61 @@ import secrets
 import numpy as np
 import os
 
-class DS:
-    def __init__(self):
-        pass
+class LamportSignature:
+    @staticmethod
+    def _hash(data):
+        return hashlib.sha256(data).digest()
 
     @staticmethod
-    def setup(self, lam):
-        n = 2*lam*lam
-        sk = np.random.randint(low=0, high=2, size=(lam, 2, lam), dtype=int)
-        h = hashlib.sha256()
+    def setup(n=256):
+        sk = [(secrets.token_bytes(32), secrets.token_bytes(32)) for _ in range(n)]
+        vk = [(LamportSignature._hash(pair[0]), LamportSignature._hash(pair[1])) for pair in sk]
+        return sk, vk
+
+    @staticmethod
+    def sign(sk, msg_bytes):
+        msg_hash = LamportSignature._hash(msg_bytes)
+        bits = []
+        for byte in msg_hash:
+            for b in range(7, -1, -1):
+                bits.append((byte >> b) & 1)
+        sign = [sk[i][bits[i]] for i in range(len(bits))]
+        return sign
+
+    @staticmethod
+    def verify(vk, msg_bytes, sign):
+        if len(sign) != len(vk):
+            return False
         
-        vk = np.empty_like(vk)
+        msg_hash = LamportSignature._hash(msg_bytes)
+        bits = []
+        for byte in msg_hash:
+            for b in range(7, -1, -1):
+                bits.append((byte >> b) & 1)
 
-        for i in range(lam):
-            for j in range(2):
-                vk[i][j] = bin(int(h(sk[i][j].encode()).hexdigest(), 16))
-        
-        return [vk, sk]
+        for i in range(len(bits)):
+            expected = vk[i][bits[i]]
+            actual = LamportSignature._hash(sign[i])
+            if not secrets.compare_digest(actual, expected):
+                return False
+        return True
 
-    @classmethod
-    def sign(sk, msg):
-        sign = [sk[i][m[i]] for i in range(len(m))]
-        return (msg, sign)
+if __name__ == "__main__":
+    sk, vk = LamportSignature.setup(bit_length=256)
+    msg = b"test msg for Lamport sign"
+    sign = LamportSignature.sign(sk, msg)
 
-    @classmethod
-    def verify(vk, msg, sign):
-        i = 0
-        while bin(int(h(sign[i].encode()).hexdigest(), 16)) == vk[i][m[i]]:
-            i+=1
-        return True if i == len(sign)-1 else False
+    good = LamportSignature.verify(vk, msg, sign)
+    print(f"Verifica msg originale: {good}")
+    assert good is True
+
+    alt_msg = b"altered msg for test"
+    bad = LamportSignature.verify(vk, alt_msg, sign)
+    print(f"Verifica msg manomesso: {bad}")
+    assert bad is False
+
+    alt_sign = list(sign)
+    alt_sign[0] = bytes([alt_sign[0][0] ^ 0xFF]) + alt_sign[0][1:]
+    esito_firma_falsa = LamportSignature.verify(vk, msg, alt_sign)
+    print(f"Verifica sign alterata: {esito_firma_falsa}")
+    assert esito_firma_falsa is False

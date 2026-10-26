@@ -36,7 +36,7 @@ class EC_ElGamal:
         xp = curve.double_and_add(p, x)
         pk = (xp, p, curve)
         sk = (x, curve)
-        return (sk, pk)
+        return (pk, sk)
 
     def Encode(self, pk, m, r=[0]):
         m_str = ''.join(list(map(lambda x: chr(x+48), m)))
@@ -104,7 +104,7 @@ def correctness_test():
     for _ in range(100):
         bits = np.random.randint(low=0, high=2, size=random.randint(1, 1000))
         m = bits.tolist()
-        sk, pk = KeyGen(curve)
+        pk, sk = KeyGen(curve)
         x = Encode(pk, m)
         d = Decode(sk, x)
         if (m != d):
@@ -124,7 +124,7 @@ def test_recover():
     rbits = "111101111011100111100111111100100001011011100000010"
     m = list(map(int, list(bits)))
     r = list(map(int, list(rbits)))
-    sk, pk = KeyGen(curve)
+    pk, sk = KeyGen(curve)
     x = Encode(pk, m, r)
     d = Decode(sk, x)
     re = Recover(pk, x, r)

@@ -2,6 +2,7 @@ from cryptography.hazmat.primitives import hashes
 import galois
 import math
 import hashlib
+import hmac
 import secrets
 
 class PRG:
@@ -24,4 +25,5 @@ class PRF:
     
     @staticmethod
     def eval(k, x, l_out):
-        return hashlib.sha256(k+x).digest()[:l_out]
+        h = hmac.new(k, x, hashlib.sha256)
+        return h.digest()[:l_out]

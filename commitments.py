@@ -5,66 +5,89 @@ import secrets
 import math
 
 class Com:
-    @staticmethod
-    def emb(t_bytes, t_bits, field):
-        t_int = int.from_bytes(t_bytes, byteorder='big')
-        if t_int >= (1 << t_bits):
-            raise ValueError(f"tag larger than {t_bits} bits")
-        return field(t_int)
-
-    @staticmethod
-    def sample_canonical_polynomial(B, field):
-        coeffs = field.Random(B)
-        return galois.Poly(coeffs, field=field)
-
-    def __init__(self, lam, N, B, t, override):
-        self.lam = lam
-        self.N = N
-        self.B = B
-        self.t = t
-        log2N = math.ceil(math.log2(N)) if N > 1 else 1
-        self.l = 2*t + (B+1)*log2N+lam*(B+1)+lam if override is None else override
-        poly = galois.irreducible_poly(2, self.l, method="min")
-        self.GF2l = galois.GF(2**self.l, irreducible_poly=poly)
+    def __init__(self, l_bytes=16, tag_bits=256):
+        self.l_bytes = l_bytes
+        self.l_bits = l_bytes*8
+        self.tag_bits = tag_bits
+        self.l_out = self.tag_bits+3*self.l_bits
+        poly = galois.irreducible_poly(2, self.l_out, method="min")
+        self.field = galois.GF(2**(self.l_out), irreducible_poly=poly)
         self.prg = PRG()
+
+    def _tag_to_field(self, tag):
+        tag_int = int.from_bytes(tag, byteorder='big')
+        return self.field(tag_int)
     
-    def setup(self):
-        A = self.GF2l.Random(self.N)
-        D = self.GF2l.Random(self.N)
-        return (self.l, A, D)
+    def setup(self, n):
+        B = self.field(secrets.randbits(self.l_out))
+        A = [self.field(secrets.randbits(self.l_out)) for _ in range(n)]
+        return (B, A, n, self.field)
     
     def commit(self, pp, S, tag):
-        l, A, D = pp
-        emb_tag = self.emb(tag, self.t, self.GF2l)
+        B, A, n, field = pp
+        if len(S) != n: raise ValueError(f"length mismatch len(S) = {len(S)} != {n}")
 
-        proofs = {}
-        xs = []
-        ys = []
+        tag_val = self._tag_to_field(tag)
+        comms = []
+        ops = []
+        for i in range(n):
+            op = secrets.token_bytes(self.l_bytes)
+            prg_op = self.prg.generate(op, self.l_out, self.field)
+            com = prg_op
+            if (S[i] == 1):
+                com += A[i] + (B*tag_val)
+            comms.append(com)
+            ops.append(op)
+        return comms, ops
 
-        for i in S:
-            s_i = secrets.token_bytes(math.ceil(self.lam / 8))
-            proofs[i] = s_i
-            y_i = self.prg.generate(s_i, l, self.GF2l) + A[i] + D[i]*emb_tag
-            xs.append(self.GF2l(i+1))
-            ys.append(y_i)
+    def open_com(self, pp, b, com, op, tag):
+        B, A, n, field = pp
+        tag_val = self._tag_to_field(tag)
+        prg_op = self.prg.generate(op, self.l_out, self.field)
+        if (b == 0 and com == prg_op) or (b == 1 and com == prg_op + A[i] + (B*tag_val)):
+            return True
+        else:
+            return False
 
-        p = galois.lagrange_poly(self.GF2l(xs), self.GF2l(ys))
-        return p, proofs
+    def equiv(self, n, tag):
+        tag_val = self._tag_to_field(tag)
+        B = self.field(secrets.randbits(self.l_out))
 
-    def verify(self, pp, p, i, sigma_i, tag):
-        l, A, D = pp
-        emb_tag = self.emb(tag, self.t, self.GF2l)
-        prval = self.prg.generate(sigma_i, l, self.GF2l)
-        check = prval + A[i] + D[i]*emb_tag
+        A = []
+        comms = []
+        ops0 = []
+        ops1 = []
 
-        return bool(p(self.GF2l(i+1)) == check)
+        for _ in range(n):
+            v = secrets.token_bytes(self.l_bytes)
+            w = secrets.token_bytes(self.l_bytes)
+            prg_v = self.prg.generate(v, self.l_out, self.field)
+            prg_w = self.prg.generate(w, self.l_out, self.field)
+
+            comms.append(prg_v)
+            A.append(prg_v-prg_w-(B*tag_val))
+            ops0.append(v)
+            ops1.append(w)
         
-    def alt_setup(self, tag):
-        emb_tag = self.emb(tag, self.t, self.GF2l)
-        s = [secrets.token_bytes(math.ceil(self.lam / 8)) for _ in range(self.N)]
-        D = self.GF2l.Random(self.N)
-        p = self.sample_canonical_polynomial(self.B, self.GF2l)
-        A = [p(self.GF2l(i+1))-self.prg.generate(s[i], self.l, self.GF2l)-D[i]*emb_tag for i in range(self.N)]
-        pp = (self.l, A, D)
-        proofs = {i: s[i] for i in range(self.N)}
-        return pp, p, proofs
+        return (B, A, n, self.field), comms, ops0, ops1
+
+if __name__ == "__main__":
+    com = Com(l_bytes=16, tag_bits=16)
+    n = 4
+    tag = secrets.token_bytes(32)
+    S = [0, 1, 1, 0]
+
+    pp = com.setup(n)
+    comms, ops = com.commit(pp, S, tag)
+
+    for i in range(n):
+        assert com.open_com(pp, S[i], comms[i], ops[i], tag) is True
+        assert com.open_com(pp, 1-S[i], comms[i], ops[i], tag) is False
+    print("correctness test passed")
+
+    pp_equiv, comms_equiv, ops0, ops1 = com.equiv(n, tag)
+
+    for i in range(n):
+        assert com.open_com(pp_equiv, 0, comms_equiv[i], ops0[i], tag) is True
+        assert com.open_com(pp_equiv, 1, comms_equiv[i], ops1[i], tag) is True
+    print("equivocality test passed")

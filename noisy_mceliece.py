@@ -8,7 +8,7 @@ import sage.coding.codes_catalog as codes
 GF2 = galois.GF(2)
 
 class NoisyMcEliece:
-    def __init__(self, n, m, d, rho, epsilon, noise, mode):
+    def __init__(self, n=65, m=255, d=37, rho=1/65, epsilon=3/255, noise=0.01, mode="BCH"):
         self.n = n
         self.m = m
         self.d = d
