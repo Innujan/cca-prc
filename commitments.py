@@ -4,18 +4,29 @@ from pseudorandom_primitives import PRG
 import secrets
 import math
 
+_FIELD_CACHE = {}
+
+
+def _get_field(l_out):
+    if l_out not in _FIELD_CACHE:
+        poly = galois.irreducible_poly(2, l_out, method="min")
+        _FIELD_CACHE[l_out] = galois.GF(2**l_out, irreducible_poly=poly)
+    return _FIELD_CACHE[l_out]
+
+
 class Com:
     def __init__(self, l_bytes=16, tag_bits=256):
         self.l_bytes = l_bytes
         self.l_bits = l_bytes*8
         self.tag_bits = tag_bits
         self.l_out = self.tag_bits+3*self.l_bits
-        poly = galois.irreducible_poly(2, self.l_out, method="min")
-        self.field = galois.GF(2**(self.l_out), irreducible_poly=poly)
+        self.field = _get_field(self.l_out)
         self.prg = PRG()
 
     def _tag_to_field(self, tag):
         tag_int = int.from_bytes(tag, byteorder='big')
+        if tag_int >= (1 << self.tag_bits):
+            raise ValueError(f"tag larger than {self.tag_bits} bits")
         return self.field(tag_int)
     
     def setup(self, n):
@@ -40,7 +51,7 @@ class Com:
             ops.append(op)
         return comms, ops
 
-    def open_com(self, pp, b, com, op, tag):
+    def open_com(self, pp, i, b, com, op, tag):
         B, A, n, field = pp
         tag_val = self._tag_to_field(tag)
         prg_op = self.prg.generate(op, self.l_out, self.field)
@@ -74,20 +85,26 @@ class Com:
 if __name__ == "__main__":
     com = Com(l_bytes=16, tag_bits=16)
     n = 4
-    tag = secrets.token_bytes(32)
+    tag = secrets.token_bytes(2)
     S = [0, 1, 1, 0]
 
     pp = com.setup(n)
     comms, ops = com.commit(pp, S, tag)
 
     for i in range(n):
-        assert com.open_com(pp, S[i], comms[i], ops[i], tag) is True
-        assert com.open_com(pp, 1-S[i], comms[i], ops[i], tag) is False
+        assert com.open_com(pp, i, S[i], comms[i], ops[i], tag) is True
+        assert com.open_com(pp, i, 1-S[i], comms[i], ops[i], tag) is False
     print("correctness test passed")
 
     pp_equiv, comms_equiv, ops0, ops1 = com.equiv(n, tag)
 
     for i in range(n):
-        assert com.open_com(pp_equiv, 0, comms_equiv[i], ops0[i], tag) is True
-        assert com.open_com(pp_equiv, 1, comms_equiv[i], ops1[i], tag) is True
+        assert com.open_com(pp_equiv, i, 0, comms_equiv[i], ops0[i], tag) is True
+        assert com.open_com(pp_equiv, i, 1, comms_equiv[i], ops1[i], tag) is True
     print("equivocality test passed")
+
+    try:
+        com.commit(pp, S, secrets.token_bytes(3))
+        raise AssertionError("tag troppo lungo accettato")
+    except ValueError:
+        print("tag length check passed")

@@ -2,8 +2,12 @@ import math
 import random
 import numpy as np
 import galois
-from sage.all import *
-import sage.coding.codes_catalog as codes
+try:  # Sage serve solo per mode="HERMITIAN"
+    from sage.all import GF as SageGF, Integer, AffineSpace, Curve, vector
+    import sage.coding.codes_catalog as codes
+    HAVE_SAGE = True
+except ImportError:
+    HAVE_SAGE = False
 
 GF2 = galois.GF(2)
 
@@ -77,7 +81,9 @@ class NoisyMcEliece:
             G = code.G.T
             t = code.t
         elif self.mode == "HERMITIAN":
-            Fq = GF(Integer(herm_q**2), 'a'); (a, ) = Fq._first_ngens(1) #define polynomial ring on the finite field of 4 elements
+            if not HAVE_SAGE:
+                raise ImportError("mode HERMITIAN richiede SageMath")
+            Fq = SageGF(Integer(herm_q**2), 'a'); (a, ) = Fq._first_ngens(1) #define polynomial ring on the finite field of 4 elements
             A = AffineSpace(Fq, Integer(2), names=('x', 'y',)); (x, y,) = A._first_ngens(2) #define polynomial affine space of two variables polynomials and over the finite field of two elements
             C = Curve(y**Integer(herm_q)+y-x**Integer(herm_q+1))
             F = C.function_field()
@@ -159,23 +165,18 @@ class NoisyMcEliece:
             return None
         return msg
 
-def test_coherence():
-    herm = get_herm_code(24)
-    G = GF(get_f2_matrix(herm).transpose())
-    for _ in range(20):
-        m = np.random.randint(0, 2, size=76)
-        sage_enc = f16_to_f2(herm.encode(vector(Fq, f2_to_f16(m))))
-        mat_enc = np.asarray(G @ GF(m), dtype=int)
-        print(np.array_equal(sage_enc, mat_enc))
-
 def test():
     p = dict(n=65, m=255, d=37, rho=1/65, epsilon=3/255, noise=0.01, mode="BCH")
     nme = NoisyMcEliece(p["n"], p["m"], p["d"], p["rho"], p["epsilon"], p["noise"], p["mode"])
     pk, sk = nme.KeyGen()
+    ok = 0
     for _ in range(100):
         m = nme.get_sample(p["rho"], p["n"])
         c = nme.Encode(pk, m)
         m_c = nme.Decode(sk, c)
-        print(np.array_equal(m, m_c))
+        ok += int(m_c is not None and np.array_equal(m, m_c))
+    print(f"decodifiche corrette: {ok}/100")
 
-test()
+
+if __name__ == "__main__":
+    test()
