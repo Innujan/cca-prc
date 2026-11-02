@@ -4,15 +4,10 @@ from pseudorandom_primitives import PRG
 import secrets
 import math
 
-_FIELD_CACHE = {}
-
 
 def _get_field(l_out):
-    if l_out not in _FIELD_CACHE:
-        poly = galois.irreducible_poly(2, l_out, method="min")
-        _FIELD_CACHE[l_out] = galois.GF(2**l_out, irreducible_poly=poly)
-    return _FIELD_CACHE[l_out]
-
+    poly = galois.irreducible_poly(2, l_out, method="min")
+    return galois.GF(2**l_out, irreducible_poly=poly)
 
 class Com:
     def __init__(self, l_bytes=16, tag_bits=256):

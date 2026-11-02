@@ -128,6 +128,38 @@ class WinternitzSignature:
     def vk_from_bytes(raw, length=32):
         return [raw[i:i+length] for i in range(0, len(raw), length)]
 
+    def vk_digest(self, vk):
+        return self._hash(b"".join(vk))
+    
+    @property
+    def vk_digest_bits(self):
+        return self.dbits
+    
+    @property
+    def sig_bits(self):
+        return self.l * self.dbits
+
+    def verify_digest(self, vk_digest, mbytes, signature):
+        if len(signature) != self.l or len(vk_digest) != self.dbytes:
+            print(f"length mismatch: signature size = {len(signature)} != {self.l} or key size = {len(vk_digest)} != {self.dbytes}")
+            return False
+        if any(not isinstance(x, (bytes, bytearray)) or len(x) != self.dbytes for x in signature):
+            print("signature type or length mismatch")
+            return False
+        digits = self._get_digits(self._hash(mbytes))
+        tops = [self._cat(signature[i], (self.b -1)-digits[i]) for i in range(self.l)]
+        return secrets.compare_digest(self._hash(b"".join(tops)),  vk_digest)
+    
+    @staticmethod
+    def sig_to_bytes(signature):
+        return b"".join(signature)
+
+    def sig_from_bytes(self, raw):
+        if len(raw) != self.l * self.dbytes:
+            print(f"length mismatch: input size = {len(raw)} != {self.l*self.dbytes}")
+            return None
+        return [raw[i:i + self.dbytes] for i in range(0, len(raw), self.dbytes)]
+
 def run_lamport():
     sk, vk = LamportSignature.setup(n=256)
     msg = b"test msg for Lamport sign"
@@ -165,3 +197,11 @@ if __name__ == "__main__":
     alt_sig[0] = bytes([alt_sig[0][0] ^ 0xFF])+alt_sig[0][1:]
     assert wots.verify(vk, msg, alt_sig) is False
     print("tampered signature passed")
+
+    dig = wots.vk_digest(vk)
+    assert len(dig)*8 == wots.vk_digest_bits
+    assert wots.verify_digest(dig, msg, sig) is True
+    assert wots.verify_digest(dig, bad_msg, sig) is False
+    assert wots.verify_digest(dig, msg, alt_sig) is False
+    assert wots.verify_digest(dig, msg, wots.sig_from_bytes(wots.sig_to_bytes(sig))) is True
+    print("verify digest / serialization passed")

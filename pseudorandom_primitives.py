@@ -58,6 +58,13 @@ class PRF:
             raise ValueError("b must be a binary value")
         return i.to_bytes(idx_bytes, byteorder='big')+bytes([b])
 
+def bits_to_bytes(bits):
+    return np.packbits(np.asarray(bits, dtype=np.uint8), bitorder='big').tobytes()
+
+def bytes_to_bits(data, nbits=None):
+    bits = np.unpackbits(np.frombuffer(bytes(data), dtype=np.uint8), bitorder='big')
+    return bits if nbits is None else bits[:nbits]
+
 if __name__ == "__main__":
     lb = 131
     nbytes = (lb + 7)//8
@@ -107,3 +114,10 @@ if __name__ == "__main__":
     print("hmac retrocompatibility pass")
 
     print("PRF serialization and fixed length pass")
+
+    for nb in (1, 7, 8, 131, 256):
+        x = np.random.randint(0, 2, nb).astype(np.uint8)
+        y = bytes_to_bits(bits_to_bytes(x), nb)
+        assert np.array_equal(x, y) and len(bits_to_bytes(x)) == (nb+7)//8
+    assert bits_to_bytes(bytes_to_bits(b"\x80\x01")) == b"\x80\x01"
+    print("bits <-> bytes round trip passed")

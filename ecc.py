@@ -1,100 +1,115 @@
-from pyldpc import make_ldpc, decode, get_message
 import numpy as np
-
+import galois
 
 class ECC:
-    def __init__(self, msg_l, dv=4, dc=8):
-        self.l = msg_l
-        self.dv = dv
-        self.dc = dc
+    def __init__(self, mbits, m, parity):
+        if parity < 2 or parity >= 2**m-1:
+            raise ValueError("invalid parity")
+        self.mbits = mbits
+        self.m = m
+        self.parity = parity
+        self.GF = galois.GF(2**m)
+        self.n = 2**m-1
+        self.rs = galois.ReedSolomon(self.n, self.n-parity, field=self.GF)
+        self.t = parity//2
+        self.k_symbol = -(-mbits // m)
+        kmax = 2**m-1-parity
+        full, rem = divmod(self.k_symbol, kmax)
+        self.block_sizes = [kmax]*full+([rem] if rem else [])
+        self.cw_bits = (self.k_symbol+parity*len(self.block_sizes))*m
+        self.cw_symbols = self.cw_bits // m
+        self._pw = 1 << np.arange(m-1, -1, -1)
+
+    def _bits_to_symbols(self, bits):
+        return (np.asarray(bits, dtype=np.int64).reshape(-1, self.m)*self._pw).sum(axis=1)
+
+    def _symbols_to_bits(self, symbols):
+        s = np.asarray(symbols, dtype=np.int64)
+        return ((s[:, None] >> np.arange(self.m-1, -1, -1)) & 1).astype(np.uint8).reshape(-1)
 
     def setup(self):
-        rate = 1 - (self.dv / self.dc)
-        n = int(self.l / rate)
-        n = -(-n // self.dc) * self.dc  # make_ldpc richiede n multiplo di dc
+        return (self.parity, self.cw_bits, self.mbits, self.k_symbol, self.m, self.block_sizes)
 
-        H, G = make_ldpc(n, self.dv, self.dc, systematic=True, sparse=True)
-        k = G.shape[1]
-        assert k >= self.l, "il codice ha dimensione minore del messaggio richiesto"
+    def encode(self, pp, msg):
+        parity, cw_bits, mbits, k, m, block_sizes = pp
+        msg = np.asarray(msg, dtype=np.uint8)
+        if msg.shape != (mbits,):
+            raise ValueError(f"message length mismatch {msg.shape} != {mbits}")
 
-        return (H, G, self.l, k, n)
+        msg_pad = np.zeros(k*m, dtype=np.uint8)
+        msg_pad[:mbits] = msg
+        symbols = self._bits_to_symbols(msg_pad)
+        out, pos = [], 0
+        for ks in block_sizes:
+            out.append(np.asarray(self.rs.encode(self.GF(symbols[pos:pos+ks])), dtype=np.int64))
+            pos += ks
+        return self._symbols_to_bits(np.concatenate(out))
 
-    def enc(self, pp, msg):
-        H, G, req_k, act_k, n = pp
-        msg = np.asarray(msg, dtype=int)
-        if len(msg) != req_k:
-            raise ValueError(f"message length {len(msg)} != {req_k}")
-
-        pad = act_k - req_k
-        msg_padd = np.pad(msg, (0, pad), 'constant', constant_values=0) if pad > 0 else msg
-
-        bin_cw = np.dot(G, msg_padd) % 2
-        return bin_cw
-
-    def _get_snr(self, p):
-        if p <= 0.0:
-            return 30.0
-        if p >= 0.5:
-            return -20.0
-
-        s_sq = 2.0 / np.log((1 - p) / p)
-        snr = 10 * np.log10(1.0 / s_sq)
-        return snr
-
-    def dec(self, pp, noisy_cw, p):
-        H, G, k_req, k_act, n = pp
-        signoise_r = self._get_snr(p)
-        bp_signal = 1.0 - 2.0 * np.asarray(noisy_cw)
-        # pyldpc 0.7.x: decode restituisce gia' i bit (0/1) della parola di codice
-        est_bin_cw = np.asarray(decode(H, bp_signal, signoise_r, maxiter=100)).astype(int)
-        synd = np.dot(H, est_bin_cw) % 2
-        if np.any(synd != 0):
-            raise ValueError("LDPC belief propagation decoding failure")
-        est_msg = get_message(G, est_bin_cw)
-        return est_msg[:k_req]
+    def decode(self, pp, noisy_cw):
+        parity, cw_bits, mbits, k, m, block_sizes = pp
+        cw = np.asarray(noisy_cw, dtype=np.uint8)
+        if cw.shape != (cw_bits,):
+            print(f"length mismatch: given cw len = {cw.shape} != {(cw_bits,)}")
+            return None
+        symbols = self._bits_to_symbols(cw)
+        msg, pos = [], 0
+        for j, ks in enumerate(block_sizes):
+            n = ks + parity
+            try:
+                dec, nerr = self.rs.decode(self.GF(symbols[pos:pos + n]), errors=True)
+            except:
+                print("b")
+                return None
+            #print(f"RS block {j}: ks={ks}, nerr={nerr}")
+            if np.any(np.asarray(nerr) < 0):
+                print(f"RS block {j}: decoding failure")
+                return None
+            msg.append(np.asarray(dec, dtype=np.int64))
+            pos += n
+        return self._symbols_to_bits(np.concatenate(msg))[:mbits]
 
 
 if __name__ == "__main__":
-    import warnings
-    warnings.filterwarnings("ignore")  # pyldpc avvisa con un warning se BP non converge
+    rng = np.random.default_rng(0)
 
-    k = 32
-    ecc = ECC(msg_l=k, dv=4, dc=8)
-    pp = ecc.setup()
-    H, G, k_req, k_act, n = pp
-    assert k_act >= k_req
+    c = ECC(24, 4, 9)
+    pp = c.setup()
+    assert (c.cw_bits, c.t) == (60, 4)
+    msg = rng.integers(0, 2, 24).astype(np.uint8)
+    cw = c.encode(pp, msg)
+    assert np.array_equal(c.decode(pp, cw), msg)
+    assert np.array_equal(cw[:24], msg)
+    for _ in range(50):
+        e = cw.copy()
+        e[rng.choice(60, 4, replace=False)] ^= 1
+        assert np.array_equal(c.decode(pp, e), msg)
+    e = cw.copy()
+    e[[0, 1, 2, 3]] ^= 1
+    assert np.array_equal(c.decode(pp, e), msg)
+    print("little RS ok")
 
-    rng = np.random.default_rng(42)
-    msg = rng.integers(2, size=k)
-
-    # round trip
-    cw = ecc.enc(pp, msg)
-    assert len(cw) == n
-    np.testing.assert_array_equal(msg, ecc.dec(pp, cw, p=0.0001))
-    print("round trip passed")
-
-    # sotto soglia
-    noisy = cw.copy()
-    noisy[5] ^= 1
-    noisy[12] ^= 1
-    np.testing.assert_array_equal(msg, ecc.dec(pp, noisy, p=0.05))
-    print("low errors passed")
-
-    # sopra soglia: deve fallire (eccezione) oppure, se BP converge a un'altra
-    # parola, restituire un messaggio diverso -> mai un successo "spurio" silenzioso
-    d_cw = cw.copy()
-    err_idx = rng.choice(len(cw), size=int(len(cw) * 0.40), replace=False)
-    d_cw[err_idx] ^= 1
-    try:
-        out = ecc.dec(pp, d_cw, p=0.1)
-        assert not np.array_equal(out, msg), "decodifica corretta con il 40% di errori?"
-        print("high errors: BP converge a parola sbagliata (da scartare in CheckNoise)")
-    except ValueError:
-        print("high errors: fallimento rilevato")
-
-    # lunghezza errata del messaggio
-    try:
-        ecc.enc(pp, msg[:-1])
-        raise AssertionError("avrebbe dovuto sollevare ValueError")
-    except ValueError:
-        print("length check passed")
+    c = ECC(10001, 12, 200)
+    pp = c.setup()
+    assert len(c.block_sizes) == 1
+    c2 = ECC(60000, 12, 776)
+    pp2 = c2.setup()
+    assert len(c2.block_sizes) == 2
+    msg = rng.integers(0, 2, 60000).astype(np.uint8)
+    cw = c2.encode(pp2, msg)
+    assert len(cw) == c2.cw_bits
+    t = c2.t
+    e = cw.copy()
+    e[rng.choice(len(cw), t, replace=False)] ^= 1
+    assert np.array_equal(c2.decode(pp2, e), msg)
+    e = cw.copy()
+    e[:t] ^= 1
+    assert np.array_equal(c2.decode(pp2, e), msg)
+    e = cw.copy()
+    idx = np.arange(0, 12*t, 12)
+    e[idx] ^= 1
+    assert np.array_equal(c2.decode(pp2, e), msg)
+    e = cw.copy()
+    e[rng.choice(len(cw), 12*(t+20), replace=False)] ^= 1
+    assert c2.decode(pp2, e) is None
+    assert c2.decode(pp2, cw[:-1]) is None
+    print("multi-block RS ok")

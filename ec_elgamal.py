@@ -94,7 +94,6 @@ class EC_ElGamal:
         x, _ = point
         return x // k
 
-    # ---- randomness deterministica: r (bytes) -> k_j ----
     def _coins(self, r, nblocks):
         n = self.curve.n
         ks = []
@@ -103,7 +102,6 @@ class EC_ElGamal:
             ks.append(int.from_bytes(h, 'big') % (n - 1) + 1)
         return ks
 
-    # ---- padding bit <-> blocchi ----
     @staticmethod
     def _to_blocks(m):
         l = len(m)
@@ -131,7 +129,6 @@ class EC_ElGamal:
                 res.extend(list(map(int, format(v, '0248b'))))
         return res
 
-    # ---- schema ----
     def KeyGen(self):
         curve = self.curve
         x = secrets.randbelow(curve.n - 1) + 1
@@ -141,7 +138,6 @@ class EC_ElGamal:
         return (pk, sk)
 
     def Encode(self, pk, m, r=None):
-        """r: seed (bytes) da cui derivare i coin; se None, ne viene scelto uno fresco."""
         if r is None:
             r = secrets.token_bytes(32)
         y, p, curve = pk
@@ -165,7 +161,6 @@ class EC_ElGamal:
         return self._from_blocks(ms)
 
     def Recover(self, pk, x, r):
-        """Decifra usando i coin r (senza chiave segreta): pm = s - k*y."""
         y, p, curve = pk
         ks = self._coins(r, len(x))
         ms = []
@@ -175,12 +170,28 @@ class EC_ElGamal:
             ms.append(self.point_to_message(pm))
         return self._from_blocks(ms)
 
+    @staticmethod
+    def ct_len(l_plain):
+        return (l_plain // BLOCK +1)*CT_PAIR_BITS
+
+    def Encode_bits(self, pk, m, r):
+        return self.serialize_ct(self.Encode(pk, m, r))
+
+    def parsed_Recover(self, pk, bits, r):
+        points = self.parse_ct(bits, self.curve)
+        if points is None:
+            return None
+        try:
+            return self.Recover(pk, points, r)
+        except Exception:
+            return None
+
     def parsed_Decode(self, sk, bits):
         points = self.parse_ct(bits, self.curve)
         if points is None:
             return None
         try:
-            return pke.Decode(sk, ct_pairs)
+            return self.Decode(sk, points)
         except Exception:
             return None
 
@@ -222,6 +233,11 @@ def parsing_test(pke):
     assert parsed_points is not None
     decoded_m = pke.Decode(sk, parsed_points)
     assert decoded_m == m_real
+    assert pke.parsed_Decode(sk, ct_r) == m_real
+    r = secrets.token_bytes(32)
+    ct_b = pke.Encode_bits(pk, m_real, r)
+    assert len(ct_b) == EC_ElGamal.ct_len(l_plain)
+    assert pke.parsed_Recover(pk, ct_b, r) == m_real
     print("round trip passed")
 
     for _ in range(50):
