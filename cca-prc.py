@@ -248,10 +248,11 @@ class CCAPRC:
             return None
         return msg
 
-def run_tests(rt=True, randomness=True, robustness=True):
+def run_tests(rt=True, randomness=True, robustness=True, mode="BCH"):
     rng = np.random.default_rng(0)
     m = 128
     Kbytes = 16
+    noise = 0.01 if mode=="BCH" else 0.0001
     print("# preparing primitives...")
     print("|# creating seed code...")
     seed_code = ECC(mbits=24, m=4, parity=9)
@@ -262,7 +263,7 @@ def run_tests(rt=True, randomness=True, robustness=True):
     print("|# creating EC-ElGamal PKE scheme...")
     pke = EC_ElGamal(LightECC(curve_name="secp256k1").curve)
     print("|# creating Noisy McEliece PRC scheme...")
-    prc = NoisyMcEliece(2688, n=65, m=255, d=37, rho=1/65, epsilon=3/255, noise=0.0001, mode="HERMITIAN")
+    prc = NoisyMcEliece(2688, n=65, m=255, d=37, rho=1/65, epsilon=3/255, noise=noise, mode=mode)
     print("|# creating Winternitz one-time signature scheme...")
     ds = WinternitzSignature(w=8)
     ecc_parity = (9//2)*(prc.alpha+1)
