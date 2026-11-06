@@ -204,14 +204,14 @@ class NoisyMcEliece:
             c_np = GF2(cbits)
             y = []
             if self.mode == "BCH":
-                y, nerr = code.decode(c_np, errors=True)
+                y, nerr = self.code.decode(c_np, errors=True)
                 if nerr == -1:
                     print("too much errors for base ECC")
                     return None
             elif self.mode == "HERMITIAN":
-                word16 = vector(Fq, self.f2_to_f16(bits, Fq))
+                word16 = vector(Fq, self.f2_to_f16(cbits, Fq))
                 try:
-                    y16 = code.decode_to_message(word16)
+                    y16 = self.code.decode_to_message(word16)
                 except Exception as e:
                     print(e)
                     return None
@@ -235,7 +235,7 @@ class NoisyMcEliece:
 
 def test(trials=5):
     import os
-    p = dict(mbits=300, n=65, m=255, d=37, rho=1/65, epsilon=3/255, noise=0.01, mode="BCH")
+    p = dict(mbits=300, n=65, m=255, d=37, rho=1/65, epsilon=3/255, noise=0.0001, mode="HERMITIAN")
     nme = NoisyMcEliece(p["mbits"], p["n"], p["m"], p["d"], p["rho"], p["epsilon"], p["noise"], p["mode"])
     print(f"w={nme.w}  bpb={nme.bpb}  blocchi={nme.nblocks}  cw_bits={nme.cwbits}  "
           f"t={nme.t}  e_max={nme.e_max}  alpha_bits={nme.alpha}")

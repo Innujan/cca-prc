@@ -2,7 +2,7 @@ from lightecc import LightECC
 import galois
 import numpy as np
 from commitments import Com
-from ec_elgamal import EC_ElGamal
+from ec_elgamal import Hashed_ElGamal
 from ecc import ECC
 from hprg import HPRG
 import os
@@ -258,61 +258,61 @@ def run_tests(rt=True, randomness=True, robustness=True, mode="BCH"):
 
     print("|# creating seed code...")
     t0 = time.time(); seed_code = ECC(mbits=24, m=4, parity=9); tsc = time.time() - t0
-    print(f"|# created seed code in {tsc}s")
+    print(f"|# created seed code in {round(tsc, 4)}s")
     
     print("|# creating hprg...")
     t0 = time.time(); hprg = HPRG(lam=6, l=256, d=4, esp=0.5, k=24, n=60); thprg = time.time() - t0
-    print(f"|# created hprg in {thprg}s")
+    print(f"|# created hprg in {round(thprg, 4)}s")
     
     print("|# creating commitments scheme...")
     t0 = time.time(); com = Com(l_bytes=16, tag_bits=256); tcom = time.time() - t0
-    print(f"|# created commitment scheme in {tcom}s")
+    print(f"|# created commitment scheme in {round(tcom, 4)}s")
     
     print("|# creating EC-ElGamal PKE scheme...")
-    t0 = time.time(); pke = EC_ElGamal(LightECC(curve_name="secp256k1").curve); tpke = time.time() - t0
-    print(f"|# created PKE scheme in {tpke}s")
+    t0 = time.time(); pke = Hashed_ElGamal(LightECC(curve_name="secp256k1").curve); tpke = time.time() - t0
+    print(f"|# created PKE scheme in {round(tpke, 4)}s")
     
     print("|# creating Noisy McEliece PRC scheme...")
-    t0 = time.time(); prc = NoisyMcEliece(2688, n=65, m=255, d=37, rho=1/65, epsilon=3/255, noise=noise, mode=mode); tprc = time.time() -t0
-    print(f"|# created PRC scheme in {tprc}s")
-    
+    t0 = time.time(); prc = NoisyMcEliece(1282, n=65, m=255, d=37, rho=1/65, epsilon=3/255, noise=noise, mode=mode); tprc = time.time() -t0
+    print(f"|# created PRC scheme in {round(tprc, 4)}s")
+
     print("|# creating Winternitz one-time signature scheme...")
     t0 = time.time(); ds = WinternitzSignature(w=8); tds = time.time() - t0
-    print(f"|# created signature scheme in {tds}s")
+    print(f"|# created signature scheme in {round(tds, 4)}s")
     
     ecc_parity = (9//2)*(prc.alpha+1)
     
     print("|# creating payload code...")
-    t0 = time.time(); payload_code = ECC(mbits=322816, m=12, parity=ecc_parity); tpc = time.time() - t0
-    print(f"|# created payload code in {tpc}s")
+    t0 = time.time(); payload_code = ECC(mbits=154096, m=12, parity=ecc_parity); tpc = time.time() - t0
+    print(f"|# created payload code in {round(tpc, 4)}s")
     
     print("|# creating signature code...")
     t0 = time.time(); signature_code = ECC(mbits=ds.sig_bits, m=12, parity=ecc_parity); tsigc = time.time() - t0
-    print(f"|# created seed code in {tsigc}s")
+    print(f"|# created seed code in {round(tsigc, 4)}s")
 
 
     print("|# creating PRG...")
-    t0 = time.tiem(); prg = PRG(); tprg = time.time() - t0
-    print(f"|# created PRG in {tprg}s")
+    t0 = time.time(); prg = PRG(); tprg = time.time() - t0
+    print(f"|# created PRG in {round(tprg, 4)}s")
     
     print("# creating PRC scheme...")
     t0 = time.time(); scheme = CCAPRC(m, Kbytes, seed_code, hprg, com, pke, prc, ds, payload_code, signature_code, prg); tscheme = time.time() - t0
-    print(f"# created PRC scheme in {tscheme}s")
+    print(f"# created PRC scheme in {round(tscheme, 4)}s")
 
     print("# setup...")
     t0 = time.time(); pk, sk = scheme.Setup(); tset = time.time() - t0
-    print(f"# setup completed in {tset}s")
+    print(f"# setup completed in {round(tset, 4)}s")
     
     msg = rng.integers(0, 2, 128).astype(np.uint8)
     
     print("# encode...")
     t0 = time.time(); ct = scheme.Encode(pk, msg); tenc = time.time() - t0
-    print(f"# encode completed in {tenc}s")
+    print(f"# encode completed in {round(tenc, 4)}s")
     
     if rt:
         print("# decode...")
         t0 = time.time(); out = scheme.Decode(pk, sk, ct); tdec = time.time() - t0
-        print(f"# decode completed in {tdec}s")
+        print(f"# decode completed in {round(tdec, 4)}s")
 
         assert out is not None and np.array_equal(msg, out)
         print("round trip ok")
@@ -370,4 +370,4 @@ def run_tests(rt=True, randomness=True, robustness=True, mode="BCH"):
         assert not np.array_equal(out, msg) and out is None
         print("random codeword reject ok")
 
-run_tests(randomness=False, robustness=False)
+run_tests(randomness=False, robustness=False, mode="HERMITIAN")
