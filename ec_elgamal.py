@@ -1,12 +1,115 @@
 import hashlib
 import secrets
-
+from cryptography.hazmat.primitives import hashes
 from lightecc import LightECC
+import random
 
 BLOCK = 248
-PTS_COORDS_BITS = 256
-PTS_BITS = PTS_COORDS_BITS*2
-CT_PAIR_BITS = 2*PTS_BITS
+COORD_BITS = 256
+PT_BITS = COORD_BITS+1
+CT_PAIR_BITS = 2*PT_BITS
+
+class Hashed_ElGamal:
+    def __init__(self, curve):
+        self.curve = curve
+        if curve.modulo % 4 != 3:
+            raise ValueError("serve q = 3 mod 4 per la radice quadrata (q+1)//4")
+ 
+    
+    def pt_to_bits(self, pt):
+        x, y = pt
+        return str(y & 1) + format(x, f"0{COORD_BITS}b")
+ 
+    def parse_pt(self, bits):
+        if len(bits) != PT_BITS or any(ch not in "01" for ch in bits):
+            return None
+        q, a, b = self.curve.modulo, self.curve.a, self.curve.b
+        x = int(bits[1:], 2)
+        if x >= q:
+            return None
+        y2 = (pow(x, 3, q) + a * x + b) % q
+        y = pow(y2, (q + 1) // 4, q)
+        if y * y % q != y2:
+            return None
+        if (y & 1) != int(bits[0]):
+            y = q - y
+        return (x, y)
+ 
+    @staticmethod
+    def ct_len(l_plain):
+        return PT_BITS + l_plain
+ 
+    def _scalar(self, r):
+        h = hashlib.shake_256(b"hEG-k" + r).digest(48)
+        return int.from_bytes(h, "big") % (self.curve.n - 1) + 1
+ 
+    def _mask(self, R, S, nbits):
+        h = hashlib.shake_256(b"hEG" + self.pt_to_bits(R).encode() + self.pt_to_bits(S).encode())
+        raw = h.digest((nbits + 7) // 8)
+        bits = bin(int.from_bytes(raw, "big"))[2:].zfill(8 * len(raw)) if raw else ""
+        return [int(ch) for ch in bits[:nbits]]
+ 
+    def KeyGen(self):
+        curve = self.curve
+        x = secrets.randbelow(curve.n - 1) + 1
+        pk = (curve.double_and_add(curve.G, x), curve.G, curve)
+        sk = (x, curve)
+        return pk, sk
+ 
+    def Encode(self, pk, m, r=None):
+        if r is None:
+            r = secrets.token_bytes(32)
+        Y, G, curve = pk
+        m = [int(v) for v in m]
+        k = self._scalar(r)
+        R = curve.double_and_add(G, k)
+        S = curve.double_and_add(Y, k)
+        return (R, [a ^ b for a, b in zip(m, self._mask(R, S, len(m)))])
+ 
+    def Decode(self, sk, ct):
+        x, curve = sk
+        R, c2 = ct
+        S = curve.double_and_add(R, x)
+        return [a ^ b for a, b in zip(c2, self._mask(R, S, len(c2)))]
+ 
+    def Recover(self, pk, ct, r):
+        Y, _, curve = pk
+        R, c2 = ct
+        S = curve.double_and_add(Y, self._scalar(r))
+        return [a ^ b for a, b in zip(c2, self._mask(R, S, len(c2)))]
+ 
+    def serialize_ct(self, ct):
+        R, c2 = ct
+        return self.pt_to_bits(R) + "".join(str(int(v)) for v in c2)
+ 
+    def parse_ct(self, bits, curve=None):
+        if not isinstance(bits, str) or len(bits) < PT_BITS:
+            return None
+        R = self.parse_pt(bits[:PT_BITS])
+        if R is None or any(ch not in "01" for ch in bits[PT_BITS:]):
+            return None
+        return (R, [int(ch) for ch in bits[PT_BITS:]])
+ 
+    def Encode_bits(self, pk, m, r):
+        return self.serialize_ct(self.Encode(pk, m, r))
+ 
+    def parsed_Decode(self, sk, bits):
+        ct = self.parse_ct(bits)
+        if ct is None:
+            return None
+        try:
+            return self.Decode(sk, ct)
+        except Exception:
+            return None
+ 
+    def parsed_Recover(self, pk, bits, r):
+        ct = self.parse_ct(bits)
+        if ct is None:
+            return None
+        try:
+            return self.Recover(pk, ct, r)
+        except Exception:
+            return None
 
 class EC_ElGamal:
     def __init__(self, curve):
@@ -16,14 +119,14 @@ class EC_ElGamal:
     
     def pts_to_bits(self, pt):
         x, y = pt
-        return format(x, f'0{PTS_COORDS_BITS}b')+format(y, f'0{PTS_COORDS_BITS}b')
+        return format(x, f'0{COORD_BITS}b')+format(y, f'0{COORD_BITS}b')
 
     def parse_pts(self, bits, curve):
-        if len(bits) != PTS_BITS:
+        if len(bits) != PT_BITS:
             return None
         try:
-            x = int(bits[:PTS_COORDS_BITS], 2)
-            y = int(bits[PTS_COORDS_BITS:], 2)
+            x = int(bits[:COORD_BITS], 2)
+            y = int(bits[COORD_BITS:], 2)
         except Exception:
             return None
 
@@ -62,8 +165,8 @@ class EC_ElGamal:
 
         for i in range(n_blocks):
             offset = i * CT_PAIR_BITS
-            c_bits = bits[offset : offset + PTS_BITS]
-            s_bits = bits[offset + PTS_BITS : offset + CT_PAIR_BITS]
+            c_bits = bits[offset : offset + PT_BITS]
+            s_bits = bits[offset + PT_BITS : offset + CT_PAIR_BITS]
 
             c = self.parse_pts(c_bits, curve)
             s = self.parse_pts(s_bits, curve)
@@ -215,47 +318,68 @@ def correctness_test(pke):
 
 def parsing_test(pke):
     pk, sk = pke.KeyGen()
-    l_plain = 513
-    m_real = [secrets.randbelow(2) for _ in range(l_plain)]
-    m_zero = [0]*l_plain
+    
+    if isinstance(pke, EC_ElGamal):
+        l_plain = 513
+        m_real = [secrets.randbelow(2) for _ in range(l_plain)]
+        m_zero = [0]*l_plain
 
-    ct_r = pke.serialize_ct(pke.Encode(pk, m_real))
-    ct_z = pke.serialize_ct(pke.Encode(pk, m_zero))
+        ct_r = pke.serialize_ct(pke.Encode(pk, m_real))
+        ct_z = pke.serialize_ct(pke.Encode(pk, m_zero))
 
-    n_blocks = (l_plain // BLOCK) + 1 if(l_plain % BLOCK == 0) else ((l_plain + 1 + BLOCK - 1)//BLOCK)
-    l_pke_ct = n_blocks * CT_PAIR_BITS
+        n_blocks = (l_plain // BLOCK) + 1 if(l_plain % BLOCK == 0) else ((l_plain + 1 + BLOCK - 1)//BLOCK)
+        l_pke_ct = n_blocks * CT_PAIR_BITS
 
-    assert len(ct_r) == l_pke_ct
-    assert len(ct_z) == l_pke_ct
-    print("fixed length test passed")
+        assert len(ct_r) == l_pke_ct
+        assert len(ct_z) == l_pke_ct
+        print("fixed length test passed")
 
-    parsed_points = pke.parse_ct(ct_r, pke.curve)
-    assert parsed_points is not None
-    decoded_m = pke.Decode(sk, parsed_points)
-    assert decoded_m == m_real
-    assert pke.parsed_Decode(sk, ct_r) == m_real
-    r = secrets.token_bytes(32)
-    ct_b = pke.Encode_bits(pk, m_real, r)
-    assert len(ct_b) == EC_ElGamal.ct_len(l_plain)
-    assert pke.parsed_Recover(pk, ct_b, r) == m_real
-    print("round trip passed")
+        parsed_points = pke.parse_ct(ct_r, pke.curve)
+        assert parsed_points is not None
+        decoded_m = pke.Decode(sk, parsed_points)
+        assert decoded_m == m_real
+        assert pke.parsed_Decode(sk, ct_r) == m_real
+        r = secrets.token_bytes(32)
+        ct_b = pke.Encode_bits(pk, m_real, r)
+        assert len(ct_b) == EC_ElGamal.ct_len(l_plain)
+        assert pke.parsed_Recover(pk, ct_b, r) == m_real
+        print("round trip passed")
 
-    for _ in range(50):
-        randb = "".join(secrets.choice("01") for _ in range(l_pke_ct))
-        res = pke.parse_ct(randb, pke.curve)
-        assert res is None
-    print("random input passed")
+        for _ in range(50):
+            randb = "".join(secrets.choice("01") for _ in range(l_pke_ct))
+            res = pke.parse_ct(randb, pke.curve)
+            assert res is None
+        print("random input passed")
 
-    corr_list = list(ct_r)
-    flip_idx = secrets.randbelow(len(corr_list))
-    corr_list[flip_idx] = '1' if corr_list[flip_idx] == '0' else '0'
-    corr_bits = "".join(corr_list)
+        corr_list = list(ct_r)
+        flip_idx = secrets.randbelow(len(corr_list))
+        corr_list[flip_idx] = '1' if corr_list[flip_idx] == '0' else '0'
+        corr_bits = "".join(corr_list)
 
-    dec_res = pke.parsed_Decode(sk, corr_bits)
-    assert (dec_res is None) or (isinstance(dec_res, list))
-    print("parsed decode passed")
+        dec_res = pke.parsed_Decode(sk, corr_bits)
+        assert (dec_res is None) or (isinstance(dec_res, list))
+        print("parsed decode passed")
+    elif isinstance(pke, Hashed_ElGamal):
+        for _ in range(20):
+            l_plain = random.randint(0, 600)
+            m = [random.randint(0, 1) for _ in range(l_plain)]
+            r = secrets.token_bytes(32)
+            ct = pke.Encode(pk, m, r)
+            bits = pke.Encode_bits(pk, m, r)
+            assert bits == pke.serialize_ct(ct) and len(bits) == Hashed_ElGamal.ct_len(l_plain)
+            assert pke.parsed_Decode(sk, bits) == m and pke.parsed_Recover(pk, bits, r) == m
+            assert pke.Encode_bits(pk, m, r) == bits
+        
+        pk1, sk1 = pke.KeyGen()
+        m = [1] + [0]*384
+        assert pke.Encode_bits(pk, m, b"a"*32) != pke.Encode_bits(pk, m, b"b"*32)
+        pk2, sk2 = pke.KeyGen()
+        assert pke.parsed_Decode(sk2, pke.Encode_bits(pk, m, b"a"*32)) != m
+        assert pke.parsed_Decode(sk, "1"*10) is None and pke.parsed_Decode(sk, "2"*400) is None
+        print("parsed test passed")
 
 
 if __name__ == "__main__":
-    pke = EC_ElGamal(LightECC(curve_name="secp256k1").curve)
+    pke = Hashed_ElGamal(LightECC(curve_name="secp256k1").curve)
+    #correctness_test(pke)
     parsing_test(pke)

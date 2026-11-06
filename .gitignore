@@ -221,3 +221,5 @@ __marimo__/
 
 test_herm_noisy.py
 t8test.txt
+fast_nme.py
+lowweight_irreducible.json

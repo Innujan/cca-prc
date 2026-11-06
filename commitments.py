@@ -9,15 +9,14 @@ import math
 _POLY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lowweight_irreducible.json")
 _FIELD_CACHE = {}
  
- 
-# ---------------------------------------------------------------------- GF(2)[x] su interi
+
 def clmul(a, b):
     if a.bit_length() < b.bit_length():
         a, b = b, a
     r = 0
     while b:
         lsb = b & -b
-        r ^= a * lsb                    # a * 2^k = a << k
+        r ^= a * lsb
         b ^= lsb
     return r
  
@@ -65,7 +64,7 @@ def is_irreducible(exps):
     f = sum(1 << e for e in exps)
     low = list(exps[1:])
     mask = (1 << l) - 1
-    u = 2                                       # x
+    u = 2
     for _ in range(l // 2):
         u = _reduce_sparse(sqr(u), l, low, mask)
         if pgcd(f, u ^ 2) != 1:

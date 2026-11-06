@@ -11,81 +11,7 @@ except ImportError:
     HAVE_SAGE = False
 from itertools import combinations
 
-GF2 = galois.GF(2)
-
-class BaseECC:
-    def __init__(self, n, d):
-        code = galois.BCH(n, d=d)
-        self.G = code.G
-        F = code.extension_field
-        self.n = code.n
-        self.k = code.k
-        self.t = code.t
-        q = F.order-1
-        a = code.alpha
-        self.exp = np.array([int(a**i) for i in range(q)]*2, dtype=np.int64)
-        self.log = np.zeros(q+1, dtype=np.int64)
-        self.log[self.exp[:q]] = np.arange(q)
-        self.q = q
-        self.s = F.degree
-        deg = (self.n-1-np.arange(self.n))[:, None]
-        js = (code.c + np.arange(2*self.t))[None, :]
-        vals = self.exp[(deg*js)%q]
-        bits = (vals[:, :, None] >> np.arange(self.s)) & 1
-        self.Msyn = bits.reshape(self.n, -1).astype(np.float32)
-        self.pw = 1 << np.arange(self.s)
-        self.c0 = code.c
-
-    def _mul(self, x, y):
-        out = self.exp[self.log[x] + self.log[y]]
-        return np.where((x == 0) | (y == 0), 0, out)
-
-    def _inv(self, x):
-        return self.exp[(self.q-self.log[x]) % self.q]
-
-    def decode(self, y):
-        y = np.asarray(y, dtype=np.uint8)
-        n, t, q = y.shape[0], self.t, self.q
-        s = (((y.astype(np.float32) @ self.Msyn).astype(np.int64) & 1).reshape(n, 2*t, self.s)*self.pw).sum(axis=2)
-
-        l = np.zeros(n, dtype=np.int64)
-        lam = np.zeros((n, 2*t+1), dtype=np.int64)
-        lam[:, 0] = 1
-        B = lam.copy()
-        b = np.ones(n, dtype=np.int64)
-        mshift = np.ones(n, dtype=np.int64)
-        rows = np.arange(n)[:, None]
-        for r in range(2*t):
-            i = r - np.arange(2*t+1)
-            sr = np.where(i >= 0, s[:, np.clip(i, 0, None)], 0)
-            d = np.bitwise_xor.reduce(self._mul(lam, sr), axis=1)
-            nz = d != 0
-            coef = self._mul(d, self._inv(np.where(b == 0, 1, b)))
-            sh = np.arange(2 * t + 1)[None, :] - mshift[:, None]
-            Bs = np.where(sh >= 0, B[rows, np.clip(sh, 0, None)], 0)
-            Tn = lam ^ self._mul(coef[:, None], Bs)
-            grow = nz & (2 * l <= r)
-            B = np.where(grow[:, None], lam, B)
-            b = np.where(grow, d, b)
-            l = np.where(grow, r + 1 - l, l)
-            mshift = np.where(grow, 1, mshift + 1)
-            lam = np.where(nz[:, None], Tn, lam)
- 
-        lam = lam[:, :t + 1]
-        p = np.arange(self.n)
-        ev = np.zeros((n, self.n), dtype=np.int64)
-        for i in range(t + 1):
-            term = self.exp[(-i * p) % q][None, :]
-            ev ^= self._mul(lam[:, i:i + 1], term)
-        roots = ev == 0
-        nroots = roots.sum(axis=1)
-        deg = np.where(lam != 0, np.arange(t + 1)[None, :], 0).max(axis=1)
-        ok = (l <= t) & (deg == l) & (nroots == l)
-        E = roots[:, ::-1]
-        C = y ^ E.astype(np.uint8)
-        nerr = np.where(ok, l, -1)
-        return C[:, :self.k], nerr
-        
+GF2 = galois.GF(2)        
 
 class NoisyMcEliece:
     def __init__(self, mbits, n=65, m=255, d=37, rho=1/65, epsilon=3/255, noise=0.01, mode="BCH", herm_q=4, herm_m=40):
@@ -101,10 +27,10 @@ class NoisyMcEliece:
         self._sizes = [math.comb(n, k) for k in range(self.w+1)]
         self.bpb = int(math.floor(math.log2(sum(self._sizes))))
         if mode == "BCH":
-            self.code = BaseECC(self.m, d=self.d)
+            self.code = galois.BCH(self.m, d=self.d)
             self.m_blk = self.code.n
             self.t = self.code.t
-            self.G = np.asarray(self.code.G.T, dtype=np.uint8)
+            self.G = self.code.G.T
             self.k = self.G.shape[1]
         elif mode == "HERMITIAN":
             Fq = SageGF(Integer(herm_q**2), 'a'); (a, ) = Fq._first_ngens(1) #define polynomial ring on the finite field of 4 elements
@@ -235,21 +161,11 @@ class NoisyMcEliece:
         perm = rng.permutation(m)
         T = self.get_full_column_rank(n, k)
         R, Tinv = self.find_row_subset(T)
-        if self.mode == "BCH":
-            E = (rng.random((m, 2*n))<self.noise).astype(np.uint8)
-            while True:
-                bad = np.flatnonzero(E.sum(axis=0)>self.e_max)
-                if bad.size == 0:
-                    break
-                E[:, bad] = (rng.random((m, bad.size)) < self.noise).astype(np.uint8)
-            T, Tinv = np.asarray(T, dtype=np.uint8), np.asarray(Tinv, dtype=np.uint8)
-            A = (((self.G.astype(np.int32) @ T) & 1)[perm] ^ E).astype(np.uint8)
-        elif self.mode == "HERMITIAN":
-            while True:
-                E = GF2(rng.binomial(1, self.noise, size=(m, 2*self.n)))
-                if np.asarray(E).sum(axis=0).max() <= self.e_max:
-                    break
-            A = GF2(np.asarray(self.G @ T)[perm]) + E
+        while True:
+            E = GF2(rng.binomial(1, self.noise, size=(m, 2*self.n)))
+            if np.asarray(E).sum(axis=0).max() <= self.e_max:
+                break
+        A = GF2(np.asarray(self.G @ T)[perm]) + E
         pk = A
         sk = dict(perm=perm, inv=np.argsort(perm), T=T, R=R, Tinv=Tinv)
         return pk, sk
@@ -267,78 +183,55 @@ class NoisyMcEliece:
         padded[:self.mbits] = msg
         s = self.get_hamming_sphere(rng, N, self.n, self._p_s)
         e = self.get_hamming_sphere(rng, N, self.m_blk, self._p_e)
-        if self.mode == "BCH":
-            msg = np.stack([self.unrank_integer(self._bits_to_int(padded[j*self.bpb:(j+1)*self.bpb])) for j in range(N)]).astype(np.uint8)
-            x = np.hstack([msg, s]).astype(np.float32) 
-            c = ((x @ np.asarray(pk, dtype=np.float32).T).astype(np.int32) & 1).astype(np.uint8) ^ e
-            return c.reshape(-1)
-        elif self.mode == "HERMITIAN":
-            out = []
-            for j in range(N):
-                msg_block = self.unrank_integer(self._bits_to_int(padded[j*self.bpb:(j+1)*self.bpb]))
-                x = GF2(np.concatenate((msg_block, s[j])).astype(int))
-                out.append(np.asarray(pk @ x + GF2(e[j]), dtype=np.uint8))
-            return np.concatenate(out)
+        out = []
+        for j in range(N):
+            msg_block = self.unrank_integer(self._bits_to_int(padded[j*self.bpb:(j+1)*self.bpb]))
+            x = GF2(np.concatenate((msg_block, s[j])).astype(int))
+            out.append(np.asarray(pk @ x + GF2(e[j]), dtype=np.uint8))
+        return np.concatenate(out)
                 
 
     def Decode(self, sk, c):
         c = np.asarray(c, dtype=np.uint8)
         if c.shape != (self.cwbits,): return None
-        if self.mode == "BCH":
-            Y = c.reshape(self.nblocks, self.m_blk)[:, sk["inv"]]
-            y, nerr = self.code.decode(Y)
-            if np.any(nerr < 0):
-                return None
-            mm = lambda a, b: (a.astype(np.float32) @ b.astype(np.float32)).astype(np.int32) & 1
-            if np.any((mm(y, self.G.T) ^ Y).sum(axis=1) > self.t):
-                return None
-            x = mm(y[:, np.asarray(sk["R"])], sk["Tinv"].T)
-            if np.any(mm(x, sk["T"].T) != y):
-                return None
-            msg, s = x[:, :self.n], x[:, self.n:]
-            if (s.sum(axis=1) > self.w).any() or (msg.sum(axis=1) > self.w).any():
-                return None
-            bits = []
-            for m in msg:
-                N = self.rank_vector(m)
-                if N >= 1 << self.bpb:
+        perm = sk["perm"]
+        bits = []
+        Fq = self.code.base_field() if self.mode == "HERMITIAN" else None
+        for j in range(self.nblocks):
+            cblock = c[j*self.m_blk:(j+1)*self.m_blk]
+            cbits = np.empty(self.m_blk, dtype=int)
+            cbits[perm] = np.asarray(cblock, dtype=int)
+            c_np = GF2(cbits)
+            y = []
+            if self.mode == "BCH":
+                y, nerr = code.decode(c_np, errors=True)
+                if nerr == -1:
+                    print("too much errors for base ECC")
                     return None
-                bits.append(self._int_to_bits(N))
-            bits = np.concatenate(bits)
-            if bits[self.mbits:].any():
-                return None
-            return bits[:self.mbits]
-        elif self.mode == "HERMITIAN":
-            perm = sk["perm"]
-            bits = []
-            Fq = self.code.base_field()
-            for j in range(self.nblocks):
-                cblock = c[j*self.m_blk:(j+1)*self.m_blk]
-                cbits = np.empty(self.m_blk, dtype=int)
-                cbits[perm] = np.asarray(cblock, dtype=int)
-                c_np = GF2(cbits)
-                w16 = vector(Fq, self.f2_to_f16(cbits, Fq))
+            elif self.mode == "HERMITIAN":
+                word16 = vector(Fq, self.f2_to_f16(bits, Fq))
                 try:
-                    y16 = self.code.decode_to_message(w16)
-                except:
+                    y16 = code.decode_to_message(word16)
+                except Exception as e:
+                    print(e)
                     return None
                 y = GF2(self.f16_to_f2(y16))
-                if np.count_nonzero(c_np-self.G @ y) > self.t:
-                    return None
-                x = sk["Tinv"] @ y[np.asarray(sk["R"])]
-                if np.any(sk["T"] @ x != y):
-                    return None
-                x = np.asarray(x)
-                msg, s = x[:self.n], x[self.n:]
-                if np.count_nonzero(s) > self.w or np.count_nonzero(msg) > self.w:
-                    return None
-                v = msg
-                N = self.rank_vector(v)
-                if N >= 1 << self.bpb: return None
-                bits.append(self._int_to_bits(N))
-            bits = np.concatenate(bits)
-            if bits[self.mbits:].any(): return None
-            return bits[:self.mbits]
+            if np.count_nonzero(c_np-self.G @ y) > self.t:
+                return None
+            x = sk["Tinv"] @ y[np.asarray(sk["R"])]
+            if np.any(sk["T"] @ x != y):
+                return None
+            x = np.asarray(x)
+            msg, s = x[:self.n], x[self.n:]
+            if np.count_nonzero(s) > self.w or np.count_nonzero(msg) > self.w:
+                return None
+            v = msg
+            N = self.rank_vector(v)
+            if N >= 1 << self.bpb: return None
+            bits.append(self._int_to_bits(N))
+        bits = np.concatenate(bits)
+        if bits[self.mbits:].any(): return None
+        return bits[:self.mbits]
 
 def test(trials=5):
     import os
@@ -356,14 +249,14 @@ def test(trials=5):
         seed = os.urandom(32)
         cw = nme.Encode(pk, msg, seed)
         assert np.array_equal(cw, nme.Encode(pk, msg, seed))
-        out = nme.Decode(sk, cw, t, "good")
+        out = nme.Decode(sk, cw)
         assert out is not None and np.array_equal(out, msg)
         bad = cw.copy()
         bad[:nme.alpha] ^= 1
-        bad_out = nme.Decode(sk, bad, t, "bad")
+        bad_out = nme.Decode(sk, bad)
         assert np.array_equal(bad_out, msg)
     rnd = rng.integers(0, 2, nme.cwbits).astype(np.uint8)
-    print(nme.Decode(sk, rnd, 0, "random") is None)
+    print(nme.Decode(sk, rnd) is None)
 
 if __name__ == "__main__":
     test()
