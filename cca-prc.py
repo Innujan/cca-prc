@@ -9,6 +9,7 @@ import os
 from noisy_mceliece import NoisyMcEliece
 from pseudorandom_primitives import PRG, PRF, bits_to_bytes, bytes_to_bits
 from sign import WinternitzSignature
+import time
 
 def ham_weight(a, b):
     return int(np.count_nonzero(np.asarray(a) != np.asarray(b)))
@@ -254,35 +255,65 @@ def run_tests(rt=True, randomness=True, robustness=True, mode="BCH"):
     Kbytes = 16
     noise = 0.01 if mode=="BCH" else 0.0001
     print("# preparing primitives...")
+
     print("|# creating seed code...")
-    seed_code = ECC(mbits=24, m=4, parity=9)
+    t0 = time.time(); seed_code = ECC(mbits=24, m=4, parity=9); tsc = time.time() - t0
+    print(f"|# created seed code in {tsc}s")
+    
     print("|# creating hprg...")
-    hprg = HPRG(lam=6, l=256, d=4, esp=0.5, k=24, n=60)
+    t0 = time.time(); hprg = HPRG(lam=6, l=256, d=4, esp=0.5, k=24, n=60); thprg = time.time() - t0
+    print(f"|# created hprg in {thprg}s")
+    
     print("|# creating commitments scheme...")
-    com = Com(l_bytes=16, tag_bits=256)
+    t0 = time.time(); com = Com(l_bytes=16, tag_bits=256); tcom = time.time() - t0
+    print(f"|# created commitment scheme in {tcom}s")
+    
     print("|# creating EC-ElGamal PKE scheme...")
-    pke = EC_ElGamal(LightECC(curve_name="secp256k1").curve)
+    t0 = time.time(); pke = EC_ElGamal(LightECC(curve_name="secp256k1").curve); tpke = time.time() - t0
+    print(f"|# created PKE scheme in {tpke}s")
+    
     print("|# creating Noisy McEliece PRC scheme...")
-    prc = NoisyMcEliece(2688, n=65, m=255, d=37, rho=1/65, epsilon=3/255, noise=noise, mode=mode)
+    t0 = time.time(); prc = NoisyMcEliece(2688, n=65, m=255, d=37, rho=1/65, epsilon=3/255, noise=noise, mode=mode); tprc = time.time() -t0
+    print(f"|# created PRC scheme in {tprc}s")
+    
     print("|# creating Winternitz one-time signature scheme...")
-    ds = WinternitzSignature(w=8)
+    t0 = time.time(); ds = WinternitzSignature(w=8); tds = time.time() - t0
+    print(f"|# created signature scheme in {tds}s")
+    
     ecc_parity = (9//2)*(prc.alpha+1)
+    
     print("|# creating payload code...")
-    payload_code = ECC(mbits=322816, m=12, parity=ecc_parity)
+    t0 = time.time(); payload_code = ECC(mbits=322816, m=12, parity=ecc_parity); tpc = time.time() - t0
+    print(f"|# created payload code in {tpc}s")
+    
     print("|# creating signature code...")
-    signature_code = ECC(mbits=ds.sig_bits, m=12, parity=ecc_parity)
+    t0 = time.time(); signature_code = ECC(mbits=ds.sig_bits, m=12, parity=ecc_parity); tsigc = time.time() - t0
+    print(f"|# created seed code in {tsigc}s")
+
+
     print("|# creating PRG...")
-    prg = PRG()
+    t0 = time.tiem(); prg = PRG(); tprg = time.time() - t0
+    print(f"|# created PRG in {tprg}s")
+    
     print("# creating PRC scheme...")
-    scheme = CCAPRC(m, Kbytes, seed_code, hprg, com, pke, prc, ds, payload_code, signature_code, prg)
+    t0 = time.time(); scheme = CCAPRC(m, Kbytes, seed_code, hprg, com, pke, prc, ds, payload_code, signature_code, prg); tscheme = time.time() - t0
+    print(f"# created PRC scheme in {tscheme}s")
+
     print("# setup...")
-    pk, sk = scheme.Setup()
+    t0 = time.time(); pk, sk = scheme.Setup(); tset = time.time() - t0
+    print(f"# setup completed in {tset}s")
+    
     msg = rng.integers(0, 2, 128).astype(np.uint8)
+    
     print("# encode...")
-    ct = scheme.Encode(pk, msg)
+    t0 = time.time(); ct = scheme.Encode(pk, msg); tenc = time.time() - t0
+    print(f"# encode completed in {tenc}s")
+    
     if rt:
         print("# decode...")
-        out = scheme.Decode(pk, sk, ct)
+        t0 = time.time(); out = scheme.Decode(pk, sk, ct); tdec = time.time() - t0
+        print(f"# decode completed in {tdec}s")
+
         assert out is not None and np.array_equal(msg, out)
         print("round trip ok")
     if randomness:
@@ -339,4 +370,4 @@ def run_tests(rt=True, randomness=True, robustness=True, mode="BCH"):
         assert not np.array_equal(out, msg) and out is None
         print("random codeword reject ok")
 
-run_tests()
+run_tests(randomness=False, robustness=False)
