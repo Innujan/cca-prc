@@ -156,18 +156,32 @@ def run_onezero(l, field):
     stdev1 = np.std(w1)
     return min0, max0, mean0, stdev0, min1, max1, mean1, stdev1
 
-for l, field in [(16, DGF16), (32, DGF32), (64, DGF64), (128, DGF128)]:
+for l, field in [(16, SGF16), (32, SGF32), (64, SGF64), (128, SGF128), (16, DGF16), (32, DGF32), (64, DGF64), (128, DGF128)]:
     print(f"## TESTING IN FIELD F_2^{l} ##")
+    maxs, means, stdevs, mins = [], [], [], []
     print("-- results of run_1flip --")
     max_media, max_maxs, min_means, min_mins, mean, stdev = run_1flip(l, field, 1000, 42)
+    maxs.append(max_maxs)
+    mins.append(min_mins)
+    means.append(mean)
+    stdevs.append(stdev)
     print(f"max_media = {max_media}\nmax_maxs = {max_maxs}\nmin_media = {min_means}\nmin_mins = {min_mins}\nmedia = {mean}\nstdev = {stdev}")
     for w in [1, 2]:
         print(f"-- results of run_nflips (w = {w}) --")
         max_media, max_maxs, min_means, min_mins, mean, stdev = run_nflips(w, l, field, 1000, 100, 42)
+        maxs.append(max_maxs)
+        mins.append(min_mins)
+        means.append(mean)
+        stdevs.append(stdev)
         print(f"max_media = {max_media}\nmax_maxs = {max_maxs}\nmin_media = {min_means}\nmin_mins = {min_mins}\nmedia = {mean}\nstdev = {stdev}")
         print(f"-- results of run_worst (w = {w}) --")
         max_media, max_maxs, min_means, min_mins, mean, stdev = run_worst(l, field, 1000, w, 42)
+        maxs.append(max_maxs)
+        mins.append(min_mins)
+        means.append(mean)
+        stdevs.append(stdev)
         print(f"max_media = {max_media}\nmax_maxs = {max_maxs}\nmin_media = {min_means}\nmin_mins = {min_mins}\nmedia = {mean}\nstdev = {stdev}")
     print(f"-- results of run_onezero --")
     min0, max0, mean0, stdev0, min1, max1, mean1, stdev1 = run_onezero(l, field)
     print(f"min0 = {min0}\nmax0 = {max0}\nmedia0 = {mean0}\nstdev0 = {stdev0}\nmin1 = {min1}\nmax1 = {max1}\nmedia1 = {mean1}\nstdev1 = {stdev1}")
+    print(f"FIELD RESULTS: min={min(mins)}, max={max(maxs)}, mean={sum(means)/len(means)}, stdev={sum(stdevs) / len(stdevs)}")
