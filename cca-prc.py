@@ -69,7 +69,6 @@ class CCAPRC:
             st = format(int(cm), f"0{self.com.l_out}b")
             com_bits.append(np.frombuffer(st.encode(), dtype=np.uint8)-48)
 
-        pke_ct = []
         pl = self.pl
         lprc = self.prc.mbits
 
@@ -114,7 +113,7 @@ class CCAPRC:
                 pkect, com = out[:self.pke_ct_bits], out[self.pke_ct_bits:]
                 parsed_m = self.pke.parsed_Decode(pke_keys[i], (np.asarray(pkect, dtype=np.uint8)+48).tobytes().decode())
                 if parsed_m is None or len(parsed_m) != self.pl or parsed_m[0] != 1:
-                    t_bit = 1
+                    opens_zero = False
                 else:
                     l_op = self.com.l_bytes * 8
                     op, vk = (bits_to_bytes(parsed_m[1:1 + l_op]), bits_to_bytes(parsed_m[1 + l_op:]))
@@ -132,8 +131,8 @@ class CCAPRC:
         t = self.seed_code.encode(seed_pp, s)
         return t, decoded
 
-    def CheckNoise(self, pk, c, comps, sigma, t, prc_skeys, decoded):
-        seed_pp, payload_pp, sigma_pp, hprg_pp, com_pp, pke_pkeys, prc_pkeys = pk
+    def CheckNoise(self, pk, c, comps, sigma, t, decoded):
+        _, payload_pp, sigma_pp, hprg_pp, _, _, prc_pkeys = pk
         
         hintrand = self.hprg.eval_all(hprg_pp, t)
         r0 = hintrand[0]
@@ -178,10 +177,6 @@ class CCAPRC:
 
     def CheckPKE(self, hprg_pp, com_pp, pke_pkeys, t, items):
         hintrand = self.hprg.eval_all(hprg_pp, t)
-        r0 = hintrand[0]
-        half_lr0 = len(r0) // 2
-        r00 = bits_to_bytes(r0[:half_lr0])
-        r01 = bits_to_bytes(r0[half_lr0:])
 
         vks = set()
         for i in range(self.n):
@@ -221,8 +216,8 @@ class CCAPRC:
 
 
     def Decode(self, pk, sk, ciphertext):
-        seed_pp, payload_pp, sigma_pp, hprg_pp, com_pp, pke_pkeys, prc_pkeys = pk
-        pke_skeys, prc_skeys = sk
+        seed_pp, _, _, hprg_pp, com_pp, pke_pkeys, _ = pk
+        _, prc_skeys = sk
 
         c, comps, sigma = ciphertext
         find_res = self.Find(com_pp=com_pp, seed_pp=seed_pp, sk=sk, comps=comps)
