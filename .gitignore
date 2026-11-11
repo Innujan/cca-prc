@@ -222,3 +222,4 @@ __marimo__/
 test_herm_noisy.py
 t8test.txt
 lowweight_irreducible.json
+bench_ccaprc.py
