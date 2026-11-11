@@ -8,6 +8,8 @@ BLOCK = 248
 COORD_BITS = 256
 PT_BITS = COORD_BITS+1
 CT_PAIR_BITS = 2*PT_BITS
+EC_PT_BITS = 2*COORD_BITS
+EC_CT_PAIR_BITS = 2*EC_PT_BITS
 
 class Hashed_ElGamal:
     def __init__(self, curve):
@@ -122,7 +124,7 @@ class EC_ElGamal:
         return format(x, f'0{COORD_BITS}b')+format(y, f'0{COORD_BITS}b')
 
     def parse_pts(self, bits, curve):
-        if len(bits) != PT_BITS:
+        if len(bits) != EC_PT_BITS:
             return None
         try:
             x = int(bits[:COORD_BITS], 2)
@@ -157,16 +159,16 @@ class EC_ElGamal:
         if not isinstance(bits, str) or len(bits) == 0:
             return None
 
-        if len(bits) % CT_PAIR_BITS != 0:
+        if len(bits) % EC_CT_PAIR_BITS != 0:
             return None
 
-        n_blocks = len(bits) // CT_PAIR_BITS
+        n_blocks = len(bits) // EC_CT_PAIR_BITS
         ct_pairs = []
 
         for i in range(n_blocks):
-            offset = i * CT_PAIR_BITS
-            c_bits = bits[offset : offset + PT_BITS]
-            s_bits = bits[offset + PT_BITS : offset + CT_PAIR_BITS]
+            offset = i * EC_CT_PAIR_BITS
+            c_bits = bits[offset : offset + EC_PT_BITS]
+            s_bits = bits[offset + EC_PT_BITS : offset + EC_CT_PAIR_BITS]
 
             c = self.parse_pts(c_bits, curve)
             s = self.parse_pts(s_bits, curve)
@@ -275,7 +277,7 @@ class EC_ElGamal:
 
     @staticmethod
     def ct_len(l_plain):
-        return (l_plain // BLOCK +1)*CT_PAIR_BITS
+        return (l_plain // BLOCK +1)*EC_CT_PAIR_BITS
 
     def Encode_bits(self, pk, m, r):
         return self.serialize_ct(self.Encode(pk, m, r))
@@ -328,7 +330,7 @@ def parsing_test(pke):
         ct_z = pke.serialize_ct(pke.Encode(pk, m_zero))
 
         n_blocks = (l_plain // BLOCK) + 1 if(l_plain % BLOCK == 0) else ((l_plain + 1 + BLOCK - 1)//BLOCK)
-        l_pke_ct = n_blocks * CT_PAIR_BITS
+        l_pke_ct = n_blocks * EC_CT_PAIR_BITS
 
         assert len(ct_r) == l_pke_ct
         assert len(ct_z) == l_pke_ct

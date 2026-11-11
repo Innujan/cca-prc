@@ -2,7 +2,7 @@ from lightecc import LightECC
 import galois
 import numpy as np
 from commitments import Com
-from ec_elgamal import Hashed_ElGamal
+from ec_elgamal import Hashed_ElGamal, EC_ElGamal
 from ecc import ECC
 from hprg import HPRG
 import os
@@ -33,6 +33,14 @@ class CCAPRC:
         self.m = m
         self.alpha = prc.alpha
         self.err_range = (seed_code.parity // 2)*(self.alpha+1)
+        if prc.mbits != self.pke_ct_bits + self.com.l_out:
+            raise ValueError("length mismatch for PRC length")
+        if payload_code.mbits != m + 8*Kbytes + 2*self.n*prc.mbits:
+            raise ValueError("length mismatch for payload ECC")
+        if signature_code.mbits != ds.sig_bits:
+            raise ValueError("length mismatch for signature ECC")
+        if payload_code.parity < 2*self.err_range or signature_code.parity < 2*self.err_range:
+            raise ValueError("not enough parity symbols for T errors tolerance")
         
     def Setup(self):
         n = self.n
@@ -226,7 +234,7 @@ class CCAPRC:
         t, decoded = find_res
         #print("Recovered t:", t)
 
-        checknoise_res = self.CheckNoise(pk, c=c, comps=comps, sigma=sigma, t=t, prc_skeys=prc_skeys, decoded=decoded)
+        checknoise_res = self.CheckNoise(pk, c=c, comps=comps, sigma=sigma, t=t, decoded=decoded)
         if checknoise_res is None:
             return None
         msg, K, cp, compsp, items, sigmabits = checknoise_res
@@ -365,4 +373,5 @@ def run_tests(rt=True, randomness=True, robustness=True, mode="BCH"):
         assert not np.array_equal(out, msg) and out is None
         print("random codeword reject ok")
 
-run_tests(randomness=False, robustness=False, mode="HERMITIAN")
+if __name__ == "__main__":
+    run_tests(randomness=False, robustness=False, mode="HERMITIAN")

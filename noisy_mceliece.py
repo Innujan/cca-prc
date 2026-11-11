@@ -3,7 +3,7 @@ import random
 import numpy as np
 import hashlib
 import galois
-try:  # Sage serve solo per mode="HERMITIAN"
+try: 
     from sage.all import GF as SageGF, Integer, AffineSpace, Curve, vector
     import sage.coding.codes_catalog as codes
     HAVE_SAGE = True

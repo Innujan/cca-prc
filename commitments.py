@@ -56,7 +56,7 @@ class Com:
 
     def open_com(self, pp, i, b, com, op, tag):
         B, A, n, field = pp
-        if not 0 <= 1 < n or b not in (0, 1):
+        if not 0 <= i < n or b not in (0, 1):
             return False
         expect = self.prg.generate(op, self.l_out, field)
         if b == 1:

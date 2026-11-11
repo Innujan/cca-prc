@@ -1,5 +1,6 @@
 import os
 import json
+import secrets
 
 _POLY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lowweight_irreducible.json")
 _FIELD_CACHE = {}

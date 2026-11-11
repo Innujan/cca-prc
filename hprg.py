@@ -33,7 +33,7 @@ class HPRG:
             raise ValueError("n must be >= k")
         self.n = n
 
-        dtype = np.int16 if p_exp <= 14 else np.int32
+        dtype = np.int8 if p_exp <= 7 else (np.int16 if p_exp <= 14 else np.int32)
         rng = self.rng
 
         A = rng.integers(low=0, high=p, size=(n, 2, d), dtype=np.int16)
