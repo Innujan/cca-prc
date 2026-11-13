@@ -2,7 +2,7 @@ from lightecc import LightECC
 import galois
 import numpy as np
 from commitments import Com
-from ec_elgamal import Hashed_ElGamal, EC_ElGamal
+from elgamal import Hashed_ElGamal, EC_ElGamal
 from ecc import ECC
 from hprg import HPRG
 import os

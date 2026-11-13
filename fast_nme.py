@@ -211,10 +211,10 @@ class NoisyMcEliece:
         R, Tinv = self.find_row_subset(T)
         E = (rng.random((m, 2*n))<self.noise).astype(np.uint8)
         while True:
-            bad = np.flatnonzero(E.sum(axis=0)>self.e_max)
+            bad = np.flatnonzero(E.sum(axis=0)>self.e_max) # check if matrix E has more than e_max ones in any column
             if bad.size == 0:
                 break
-            E[:, bad] = (rng.random((m, bad.size)) < self.noise).astype(np.uint8)
+            E[:, bad] = (rng.random((m, bad.size)) < self.noise).astype(np.uint8) # regenerate the columns of E that have too many ones
         T, Tinv = np.asarray(T, dtype=np.uint8), np.asarray(Tinv, dtype=np.uint8)
         A = (((self.G.astype(np.int32) @ T) & 1)[perm] ^ E).astype(np.uint8)
         pk = A

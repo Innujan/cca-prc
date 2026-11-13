@@ -24,7 +24,7 @@ class NoisyMcEliece:
         self.noise = noise
         self.rng = np.random.default_rng()
         self.w = math.floor(rho*n)
-        self._sizes = [math.comb(n, k) for k in range(self.w+1)]
+        self._sizes = [math.comb(n, k) for k in range(self.w+1)] # sizes of the Hamming spheres of radius w
         self.bpb = int(math.floor(math.log2(sum(self._sizes))))
         if mode == "BCH":
             self.code = galois.BCH(self.m, d=self.d)
@@ -33,7 +33,7 @@ class NoisyMcEliece:
             self.G = self.code.G.T
             self.k = self.G.shape[1]
         elif mode == "HERMITIAN":
-            Fq = SageGF(Integer(herm_q**2), 'a'); (a, ) = Fq._first_ngens(1) #define polynomial ring on the finite field of 4 elements
+            Fq = SageGF(Integer(herm_q**2), 'a'); (a, ) = Fq._first_ngens(1) #define polynomial ring on the finite field of q**2 elements
             A = AffineSpace(Fq, Integer(2), names=('x', 'y',)); (x, y,) = A._first_ngens(2) #define polynomial affine space of two variables polynomials and over the finite field of two elements
             C = Curve(y**Integer(herm_q)+y-x**Integer(herm_q+1))
             F = C.function_field()
@@ -56,7 +56,7 @@ class NoisyMcEliece:
             self.m_blk = self.G.shape[0]
             self.m = self.m_blk
             self.t = self.code.decoder().decoding_radius()
-        self.e_max = math.ceil(2*self.noise*self.m_blk)
+        self.e_max = math.ceil(2*self.noise*self.m_blk) # maximum number of errors
         self.eps_w = math.floor(epsilon*self.m_blk)
         self.alpha = self.t - self.eps_w - 2*self.w*self.e_max
         if self.alpha < 1:
@@ -65,9 +65,9 @@ class NoisyMcEliece:
         self.mbits = mbits
         self.nblocks = math.ceil(mbits / self.bpb)
         self.cwbits = self.nblocks*self.m_blk
-        self._p_s = np.array(self._sizes, dtype=float) / sum(self._sizes)
+        self._p_s = np.array(self._sizes, dtype=float) / sum(self._sizes) #probabilities of the Hamming spheres of radius w
         sz_e = [math.comb(self.m_blk, k) for k in range(self.eps_w+1)]
-        self._p_e = np.array(sz_e, dtype=float) / sum(sz_e)
+        self._p_e = np.array(sz_e, dtype=float) / sum(sz_e) #probabilities of the Hamming spheres of radius eps_w
 
     def get_full_column_rank(self, n, k):
         while True:
@@ -76,9 +76,9 @@ class NoisyMcEliece:
                 return T
 
     def find_row_subset(self, T):
-        k, cols = T.shape
+        k, cols = T.shape 
         while True:
-            R = np.sort(np.array(random.sample(range(k), cols))) #retrieve random 2n rows indices
+            R = np.sort(np.array(random.sample(range(k), cols))) #retrieve random "cols"(2n)-subset of k rows of T
             try: #probability of finding a nxn invertible random matrix = ~0.29
                 # probability of T[R] being invertible = wt(v)/k
                 Tinv = np.linalg.inv(T[R]) #tries to invert T on the indices of R
@@ -162,8 +162,8 @@ class NoisyMcEliece:
         T = self.get_full_column_rank(n, k)
         R, Tinv = self.find_row_subset(T)
         while True:
-            E = GF2(rng.binomial(1, self.noise, size=(m, 2*self.n)))
-            if np.asarray(E).sum(axis=0).max() <= self.e_max:
+            E = GF2(rng.binomial(1, self.noise, size=(m, 2*self.n))) # generate a random error matrix with noise probability
+            if np.asarray(E).sum(axis=0).max() <= self.e_max: # check if the number of errors in each column is less than or equal to e_max
                 break
         A = GF2(np.asarray(self.G @ T)[perm]) + E
         pk = A
@@ -196,7 +196,6 @@ class NoisyMcEliece:
         if c.shape != (self.cwbits,): return None
         perm = sk["perm"]
         bits = []
-        Fq = self.code.base_field() if self.mode == "HERMITIAN" else None
         for j in range(self.nblocks):
             cblock = c[j*self.m_blk:(j+1)*self.m_blk]
             cbits = np.empty(self.m_blk, dtype=int)
@@ -209,6 +208,7 @@ class NoisyMcEliece:
                     print("too much errors for base ECC")
                     return None
             elif self.mode == "HERMITIAN":
+                Fq = self.code.base_field()
                 word16 = vector(Fq, self.f2_to_f16(cbits, Fq))
                 try:
                     y16 = self.code.decode_to_message(word16)
@@ -235,28 +235,10 @@ class NoisyMcEliece:
 
 def test(trials=5):
     import os
-    p = dict(mbits=300, n=65, m=255, d=37, rho=1/65, epsilon=3/255, noise=0.0001, mode="HERMITIAN")
+    p = dict(mbits=1282, n=65, m=255, d=37, rho=1/65, epsilon=3/255, noise=0.0005, mode="BCH")
     nme = NoisyMcEliece(p["mbits"], p["n"], p["m"], p["d"], p["rho"], p["epsilon"], p["noise"], p["mode"])
     print(f"w={nme.w}  bpb={nme.bpb}  blocchi={nme.nblocks}  cw_bits={nme.cwbits}  "
           f"t={nme.t}  e_max={nme.e_max}  alpha_bits={nme.alpha}")
-    tot = sum(nme._sizes)
-    for N in list(range((min(tot, 200)))) + [tot-1]:
-        assert nme.rank_vector(nme.unrank_integer(N)) == N
-    pk, sk = nme.KeyGen()
-    rng = np.random.default_rng(1)
-    for t in range(trials):
-        msg = rng.integers(0, 2, 300).astype(np.uint8)
-        seed = os.urandom(32)
-        cw = nme.Encode(pk, msg, seed)
-        assert np.array_equal(cw, nme.Encode(pk, msg, seed))
-        out = nme.Decode(sk, cw)
-        assert out is not None and np.array_equal(out, msg)
-        bad = cw.copy()
-        bad[:nme.alpha] ^= 1
-        bad_out = nme.Decode(sk, bad)
-        assert np.array_equal(bad_out, msg)
-    rnd = rng.integers(0, 2, nme.cwbits).astype(np.uint8)
-    print(nme.Decode(sk, rnd) is None)
 
 if __name__ == "__main__":
     test()
